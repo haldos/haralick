@@ -57,16 +57,22 @@ int main(int argc, char *argv[]) {
 								 { -4,  -2,   0,  2,   4,   2,   1,   0,  -1,  -2,   4,   2,  0, -2, -4,  2,   1,  0, -1, -2,  -4,  -2,  0,  2,   4},
 								 { -4,   2,   4,  2,  -4,  -2,   1,   2,   1,  -2,   0,   0,  0,  0,  0,  2,  -1, -2, -1,  2,   4,  -2, -4, -2,   4},
 								 { -1,   2,   0, -2,   1,  -1,   2,   0,  -2,   1,  -1,   2,  0, -2,  1, -1,   2,  0, -2,  1,  -1,   2,  0, -2,   1} };
-		double weights[10] = {1/175, 1/420, 1/420, 1/70, 1/100, 1/70, 1/60, 1/140, 1/140, 1/60};
+		double weights[10] = {175, 420, 420, 70, 100, 70, 60, 140, 140, 60};
+		int i,j;
+		for(i=0;i<10;i++){
+			for(j=0;j<25;j++){
+				masks[i][j] /= weights[i];
+			}
+		}
 
 		// Initialise edge image
-		float *edges = malloc(w*h*sizeof(float));
+		float *edges = calloc(w*h,sizeof(float));
 
 		// Zero-padding
 		int wx = (w+8);
 		int hx = (h+8);
 		double *aux = calloc(wx*hx,sizeof(double));
-		int i,j,fila,col;
+		int fila,col;
 		int imax = wx*hx;
 		for(i=0;i<imax;i++){
 			fila = (int)(i/wx);
@@ -77,18 +83,48 @@ int main(int argc, char *argv[]) {
 		}
 		
 		// Haralick's algorithm
-		// TODO
-		int i_zp;
+		int i_zp, u, v, num_edges;
+		num_edges = 0;
 		double k[10];
+		int *offsets = get_neighbors_offset(wx, 5);
+		double acum;
+		double C2, C3, denom, sintheta, costheta;
 		for(fila=0;fila<h;fila++){
 			for(col=0;col<w;col++){
 				i = col + w*fila;				// original image & edges images index
 				i_zp = (col+4) + wx*(fila+4);	// zero padded image index
 				
-				// k1 to k10 (note: k1 is not necessary)
+				// need neighborhood
+				double *neighborhood = get_neighborhood(aux, i_zp, 5, offsets);
+
+				// k1 to k10 (note: k1 (u=0) is not necessary)
+				for(u=1;u<10;u++){
+					acum = 0;
+					for(v=0;v<25;v++){
+						acum += neighborhood[v]*masks[u][v];
+					}
+					k[u] = acum;
+				}
+			
+				// compute C2 and C3
+				denom = k[1]*k[1] + k[2]*k[2];
+				C2 = ( k[1]*k[1]*k[3] + k[1]*k[2]*k[4] + k[2]*k[2]*k[5] ) / denom;
+				C3 = ( k[1]*k[1]*k[1]*k[6] + k[1]*k[1]*k[2]*k[7] + k[1]*k[2]*k[2]*k[8] + k[2]*k[2]*k[2]*k[9] ) / ( denom*sqrt(denom) );
+
+				denom = fabs(C2 / (3*C3));	// reuse of denom...
+				// edge pixel conditions
+				if ( (C3<0) && (denom<rhozero) ) {
+					edges[i] = 255;
+					num_edges += 1;
+				}
+
+				// free neighborhood
+				free_neighborhood(neighborhood);
 			}
 		}
 		
+		// Result
+		fprintf(stderr, "%d edge points found...\n", num_edges);
 
 		// Save output image
 		iio_save_image_float_vec(argv[3], edges, w, h, 1);
@@ -97,13 +133,15 @@ int main(int argc, char *argv[]) {
 		// Free memory
 		free(im_orig);
 		free(im);
+		free(aux);
+		free(edges);
 
 		fprintf(stderr, "haralick's edge detector computation done.\n");
 
 		// Execution time:
 		double finish = (double)clock();
 		double exectime = (finish - start)/CLOCKS_PER_SEC;
-		fprintf(stderr, "execution time: %1.3f s.\n", exectime);		
+		fprintf(stderr, "\texecution time: %1.3f s.\n", exectime);		
 
 		return 0;
 	
